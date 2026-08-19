@@ -5,9 +5,9 @@ AgentFrame — Agent 专用上下文保持框架
 手 = 工具执行 (Function Calling)
 记忆 = 四层上下文保持 (认知 × 路由 × 存储 × 物理)
 
-版本: 4.4.0 (先明·第四代: Top-K 保护 + 无损检索 + 真 INT4 存储)
+版本: 4.4.1 (先明·第四代: Top-K 保护 + 死代码清理 + 配置修复)
 """
-__version__ = "4.4.0"
+__version__ = "4.4.1"
 
 from .core.quad import (
     CompressedKV,

@@ -2,7 +2,7 @@
 
 **脑 = DeepSeek · 手 = 工具执行 · 记忆 = 四层上下文保持**
 
-版本 4.4.0 · GPL-3.0 · Cloud LTE Studio
+版本 4.4.1 · GPL-3.0 · Cloud LTE Studio
 
 ---
 
@@ -258,6 +258,17 @@ GPL-3.0 © Cloud LTE Studio
 ---
 
 ##  Changelog
+
+### v4.4.1 (2026-08-19) — 死代码清理 + 配置修复
+
+**修复**
+- vram_limit_mb/ram_limit_mb 配置真实传入 KVPager (之前 QuadLayerAgent 用默认值, 配置改不生效)
+
+**清理** (删除 6 处死代码)
+- gqa_group_select / analyze_gap / rollback_compensate / addr_to_token / module_range
+- 保留 two_stage_evict (讨论室设计的驱逐方案, 有思想价值, 待接入)
+
+**测试**: 核心测试 17 项 + 配置生效验证
 
 ### v4.4.0 (2026-08-19) — Top-K 保护 + 无损检索 (L40S 实测驱动)
 

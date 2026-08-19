@@ -78,21 +78,8 @@ class HierarchicalKV:
         return module_id, block_id, sector_id, offset
 
     @staticmethod
-    def addr_to_token(module_id, block_id, sector_id, offset) -> int:
-        return (module_id * HierarchicalKV.MODULE_SIZE
-                + block_id * HierarchicalKV.BLOCK_SIZE
-                + sector_id * HierarchicalKV.SECTOR_SIZE
-                + offset)
-
-    @staticmethod
-    def module_range(module_id: int) -> tuple:
-        """Module 的 token 范围"""
-        start = module_id * HierarchicalKV.MODULE_SIZE
-        return start, start + HierarchicalKV.MODULE_SIZE
-
-    @staticmethod
     def build_value_hist(latents: list, bins: int = 8) -> np.ndarray:
-        """构建块价值直方图 (两阶段驱逐用, Pro 讨论结论)"""
+        """构建块价值直方图 (两阶段驱逐用, Pro 讨论结论) — 由 two_stage_evict 使用"""
         if not latents:
             return np.zeros(bins)
         # 用 latent 范数作为价值代理 (可替换为注意力分数)
@@ -343,13 +330,6 @@ class AbsorbedMLA:
             return True
         return False
 
-    def rollback_compensate(self, chunk_id: int) -> np.ndarray:
-        """回滚补偿: 受保护块走高精度路径"""
-        kv = self.chunks.get(chunk_id)
-        if kv is None:
-            return None
-        return ReversibleQuantizer.compensate(kv)
-
     def bytes_per_token(self) -> float:
         """每 token 每层字节 (27 层总): INT4 打包 = 288B q4 + n_ch*4B scales"""
         if self.quant_bits == 4:
@@ -454,15 +434,7 @@ class LandmarkRouter:
             weights=weights.tolist(),
         )
 
-    def gqa_group_select(self, group_scores: np.ndarray) -> list:
-        """GQA 组内 max 聚合 (任一头重要即选中)"""
-        group_max = np.max(group_scores, axis=0)
-        return np.argsort(group_max)[-self.top_k:].tolist()
 
-
-# ============================================================
-# L4 物理层: KV 换页 + 预测性驱逐
-# ============================================================
 # ============================================================
 # L4 物理层: KV 换页 + 预测性驱逐 (含遗忘曲线)
 # ============================================================
@@ -710,11 +682,6 @@ class MetaCog:
         """置信度追踪 (0-1)"""
         return response_likelihood
 
-    def analyze_gap(self, subtask: SubTask, context_keys: set) -> list:
-        """信息缺口: 需要但上下文没有的信息"""
-        gaps = [need for need in subtask.info_needs if need not in context_keys]
-        return gaps
-
     def build_directive(self, subtask: SubTask, chunk_map: dict) -> RetrievalDirective:
         """生成检索指令 (认知层 → 路由/物理层)"""
         needed = []
@@ -741,11 +708,13 @@ class MetaCog:
 # ============================================================
 class QuadLayerAgent:
     """四层融合 Agent"""
-    def __init__(self, n_layers=27, quant_bits=4, top_k=32, seed=42, reversible=False):
+    def __init__(self, n_layers=27, quant_bits=4, top_k=32, seed=42, reversible=False,
+                 vram_limit_mb=10240, ram_limit_mb=32768):
         self.metacog = MetaCog()
         self.router = LandmarkRouter(top_k=top_k, seed=seed)
         self.store = AbsorbedMLA(n_layers=n_layers, quant_bits=quant_bits, reversible=reversible)
-        self.pager = KVPager()
+        # 修复: 配置的显存/内存上限真实传入 (之前 KVPager 用默认值, 配置不生效)
+        self.pager = KVPager(vram_limit_mb=vram_limit_mb, ram_limit_mb=ram_limit_mb)
         self.chunk_meta = {}  # chunk_id -> {tags, ...}
         self.summaries = {}   # chunk_id -> (k_prime, bias)
         self.now = 0.0

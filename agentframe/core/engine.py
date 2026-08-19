@@ -126,7 +126,8 @@ class ContextEngine:
         # 四层核心
         self.agent = QuadLayerAgent(
             n_layers=m.n_layers, quant_bits=m.quant_bits,
-            top_k=m.top_k, seed=m.seed, reversible=m.reversible)
+            top_k=m.top_k, seed=m.seed, reversible=m.reversible,
+            vram_limit_mb=m.vram_limit_mb, ram_limit_mb=m.ram_limit_mb)
 
         # 外部能力
         self.llm = llm or create_llm(
