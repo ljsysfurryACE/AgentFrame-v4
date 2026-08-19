@@ -2,7 +2,7 @@
 
 **脑 = DeepSeek · 手 = 工具执行 · 记忆 = 四层上下文保持**
 
-版本 4.4.1 · GPL-3.0 · Cloud LTE Studio
+版本 4.5.0 · GPL-3.0 · Cloud LTE Studio
 
 ---
 
@@ -38,6 +38,7 @@
 | **Couple 预取** | 跨轮共现预取: 检索到 A 后预取常与 A 共现的 B (colibrì couple) | ✓ 有测试 |
 | **KV 增量持久化** | 每轮 append 不重写全量, crash-safe 坏行跳过 (colibrì kv_persist) | ✓ 有测试 |
 | **前缀复用** | 相同前缀 query 复用上次检索, 保持热块 (colibrì kv_prefix) | ✓ 有测试 |
+| **认知层接线** | directive.required_chunks 参与路由加权 (任务标签→命中提升) | ✓ 有测试 |
 | **脑+手** | function calling 工具循环, Agent 自验证代码 | ✓ 有测试 + 安全拦截 |
 | **多会话** | 每会话独立引擎, 状态可持久化 | ✓ |
 
@@ -258,6 +259,16 @@ GPL-3.0 © Cloud LTE Studio
 ---
 
 ##  Changelog
+
+### v4.5.0 (2026-08-19) — 认知层指令接线
+
+**新增**
+- **directive.required_chunks 参与检索**: 认知层按标签匹配的"任务需要"块, 在路由打分时加权 (boost_weight=0.5), 任务需求真正影响命中排序 (之前构建后丢弃)
+- `LandmarkRouter.route()` 新增 boost_chunks/boost_weight 参数
+
+**验证**: 无 boost Top5=[4,0,1,2,3] → 有 boost Top5=[0,2,4,1,3] (method 标签块被提升)
+
+**测试**: 核心测试 18 项 (+test_directive_boost)
 
 ### v4.4.1 (2026-08-19) — 死代码清理 + 配置修复
 

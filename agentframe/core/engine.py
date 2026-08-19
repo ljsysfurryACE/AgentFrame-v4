@@ -252,9 +252,11 @@ class ContextEngine:
         if reuse is not None:
             selection = reuse
         else:
-            # 2. 路由层: landmark 检索
+            # 2. 路由层: landmark 检索 (认知层 directive 的 required_chunks 参与加权)
             q_vec = self.embedder.embed(query)
-            selection = self.agent.router.route(q_vec, q_vec, self.agent.summaries)
+            selection = self.agent.router.route(
+                q_vec, q_vec, self.agent.summaries,
+                boost_chunks=directive.required_chunks)
         self._last_query = query
         self._last_retrieved = list(selection.chunk_ids)
 

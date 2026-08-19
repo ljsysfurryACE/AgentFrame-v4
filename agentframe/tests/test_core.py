@@ -326,6 +326,34 @@ def test_incremental_engine():
     print("✅ test_incremental_engine (引擎级增量恢复 + 检索)")
 
 
+def test_directive_boost():
+    """认知层指令接线 (v4.5): required_chunks 参与路由加权"""
+    eng = make_engine()
+    # 标签与 decompose keyword 映射对齐 (method/data/comparison)
+    eng.ingest("DeepSeek 模型 KV 缓存", ["method", "kv"])
+    eng.ingest("Aura 遗忘曲线设计", ["memory"])
+    eng.ingest("LFRU 滞回驱逐", ["paging", "method"])
+    eng.ingest("Minecraft 游戏攻略", ["game"])
+    eng.ingest("压缩方案对比测试", ["comparison", "data"])
+
+    r = eng.ask("分析 KV 压缩方案", chat=False)
+    # 1. directive 标签匹配出 method 块
+    assert r.directive.required_chunks, "required_chunks 不应为空"
+    assert 0 in r.directive.required_chunks
+    assert 2 in r.directive.required_chunks
+    # 2. boost 影响排序: method 块排进前二
+    assert r.retrieved[0][0] in (0, 2), f"method 块应被提升, 实际 {r.retrieved}"
+    # 3. 对照: 无 boost 时纯向量排序不同
+    from agentframe.core.quad import LandmarkRouter
+    import numpy as np
+    q_vec = eng.embedder.embed("分析 KV 压缩方案")
+    s_nb = eng.agent.router.route(q_vec, q_vec, eng.agent.summaries)
+    s_b = eng.agent.router.route(q_vec, q_vec, eng.agent.summaries,
+                                 boost_chunks=r.directive.required_chunks)
+    assert s_nb.chunk_ids != s_b.chunk_ids, "boost 应改变排序"
+    print("✅ test_directive_boost (required_chunks 参与路由加权)")
+
+
 if __name__ == "__main__":
     test_ingest_and_retrieve()
     test_similar_text_retrieval()
@@ -342,4 +370,5 @@ if __name__ == "__main__":
     test_incremental_persist()
     test_prefix_reuse()
     test_incremental_engine()
+    test_directive_boost()
     print("\n🎉 全部核心测试通过!")

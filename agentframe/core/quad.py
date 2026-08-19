@@ -403,15 +403,22 @@ class LandmarkRouter:
         return query + delta
 
     def route(self, query: np.ndarray, hidden: np.ndarray,
-              chunk_summaries: dict) -> ChunkSelection:
+              chunk_summaries: dict, boost_chunks: list = None,
+              boost_weight: float = 0.5) -> ChunkSelection:
         """
         打分 + top-K:
-        ŝ_i,c = (q̂ᵢ·k'c)/√d + b'c
+        ŝ_i,c = (q̂ᵢ·k'c)/√d + b'c + (认知层指令加权, 可选)
+
+        boost_chunks: 认知层 directive 认为"任务需要"的块 (标签匹配), 加分提升命中。
+        boost_weight: 每次命中加权量 (默认 0.5, 相当于一次强相关命中)。
         """
         q_hat = self.q_calibrate(query, hidden)
+        boost = set(boost_chunks) if boost_chunks else set()
         scores = {}
         for cid, (k_prime, bias) in chunk_summaries.items():
             s = q_hat @ k_prime / np.sqrt(self.d_model) + bias
+            if cid in boost:
+                s += boost_weight  # 认知层指令: 任务需要的块加权
             scores[cid] = s
 
         # top-K
