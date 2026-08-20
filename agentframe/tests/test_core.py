@@ -354,6 +354,53 @@ def test_directive_boost():
     print("✅ test_directive_boost (required_chunks 参与路由加权)")
 
 
+def test_checksum_protection():
+    """checksum 防静默损坏 (memory-system 协议启发): 篡改行跳过, 旧格式兼容"""
+    import tempfile, os
+    from agentframe.memory.incremental import IncrementalKVStore
+    import numpy as np
+
+    path = tempfile.mktemp(suffix=".kv")
+    store = IncrementalKVStore(path)
+    # 写 3 条 (全部带 checksum)
+    store.append(0, np.zeros(288, dtype=np.uint8), np.ones(16, dtype=np.float32),
+                 np.zeros(576, dtype=np.float32), 4, 352, {"text": "A"})
+    store.append(1, np.ones(288, dtype=np.uint8), np.ones(16, dtype=np.float32) * 2,
+                 np.ones(576, dtype=np.float32), 4, 352, {"text": "B"})
+    store.append(2, np.zeros(288, dtype=np.uint8), np.ones(16, dtype=np.float32),
+                 np.zeros(576, dtype=np.float32), 4, 352, {"text": "C"})
+    assert store.count() == 3
+
+    # 篡改第 2 行内容 (改 text 但不动 checksum) → 应被检测跳过
+    lines = open(path).read().splitlines()
+    import json as _json
+    rec = _json.loads(lines[1])
+    rec["meta"]["text"] = "TAMPERED"
+    lines[1] = _json.dumps(rec, ensure_ascii=False)
+    open(path, "w").write("\n".join(lines) + "\n")
+
+    recs = store.load()
+    assert len(recs) == 2, f"篡改行应被跳过, 实际 {len(recs)}"
+    assert recs[0]["meta"]["text"] == "A"
+    assert recs[1]["meta"]["text"] == "C", "篡改的 B 不应出现"
+    print("✅ test_checksum_protection (篡改行检测跳过)")
+
+    # 旧格式兼容: 无 checksum 的行仍接受
+    path2 = tempfile.mktemp(suffix=".kv")
+    store2 = IncrementalKVStore(path2)
+    old_line = _json.dumps({"magic": "AFKV1", "chunk_id": 9, "quant_bits": 4,
+                            "size_bytes": 352, "q4": None, "scales": None,
+                            "latent": [0.0] * 576, "meta": {"text": "OLD"}},
+                           ensure_ascii=False)
+    with open(path2, "w") as f:
+        f.write(old_line + "\n")
+    recs2 = store2.load()
+    assert len(recs2) == 1 and recs2[0]["meta"]["text"] == "OLD"
+    print("✅ test_checksum_protection (旧格式无 checksum 兼容)")
+    os.unlink(path)
+    os.unlink(path2)
+
+
 if __name__ == "__main__":
     test_ingest_and_retrieve()
     test_similar_text_retrieval()
@@ -371,4 +418,5 @@ if __name__ == "__main__":
     test_prefix_reuse()
     test_incremental_engine()
     test_directive_boost()
+    test_checksum_protection()
     print("\n🎉 全部核心测试通过!")

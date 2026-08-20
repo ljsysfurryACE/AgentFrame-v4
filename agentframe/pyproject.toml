@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentframe"
-version = "4.5.0"
-description = "AgentFrame v4.5 — 认知层指令接线 (directive→路由) + Top-K 保护 + 真 INT4 29.1x + Couple + LFRU"
+version = "4.5.1"
+description = "AgentFrame v4.5 — 认知层接线 + checksum 防损坏 + Top-K 保护 + 真 INT4 29.1x"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0" }

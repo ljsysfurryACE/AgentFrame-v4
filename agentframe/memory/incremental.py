@@ -9,19 +9,42 @@ AgentFrame 移植:
   - 行级独立 = 崩溃时最多丢最后一条, 坏行跳过 (crash-safe)
   - load() 读全部记录重建 chunk + 自动重建 landmark 摘要
   - 与全量快照 (StateStore) 互补: 增量管内容, 快照管运行时热度状态
+
+v4.5.1 增强 (memory-system 协议启发):
+  - 每行 content checksum (MD5 前 8 位): 篡改/静默损坏的行整行跳过,
+    杜绝"corruption is silent and permanent" (读到的就是错的)
+  - 旧格式兼容: 无 checksum 的历史行仍接受, 新写入全部带校验
 """
 import json
 import os
+import hashlib
 import numpy as np
 
 
 class IncrementalKVStore:
-    """增量追加 KV 日志 (colibrì kv_persist 思想)"""
+    """增量追加 KV 日志 (colibrì kv_persist 思想 + checksum 防损坏)"""
 
     MAGIC = "AFKV1"
 
     def __init__(self, path: str):
         self.path = path
+
+    # ============ 校验和 ============
+
+    @staticmethod
+    def _checksum(payload: dict) -> str:
+        """内容校验和: 对记录主体做 MD5, 取前 8 位 hex"""
+        body = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        return hashlib.md5(body.encode("utf-8")).hexdigest()[:8]
+
+    @staticmethod
+    def _verify(rec: dict) -> bool:
+        """校验一条记录: 有 checksum 则验证; 无 checksum 视为旧格式接受"""
+        cs = rec.pop("checksum", None)
+        if cs is None:
+            return True  # 旧格式行 (无校验): 兼容接受
+        payload = {k: v for k, v in rec.items() if k != "checksum"}
+        return IncrementalKVStore._checksum(payload) == cs
 
     # ============ 写入 ============
 
@@ -29,10 +52,10 @@ class IncrementalKVStore:
                latent: np.ndarray, quant_bits: int, size_bytes: int,
                meta: dict) -> int:
         """
-        追加一条 chunk 记录 (每行一个 JSON, 追加模式).
+        追加一条 chunk 记录 (每行一个 JSON, 带 content checksum).
         返回当前记录数 (类似 colibrì 的 nrec).
         """
-        rec = {
+        payload = {
             "magic": self.MAGIC,
             "chunk_id": int(chunk_id),
             "quant_bits": int(quant_bits),
@@ -42,6 +65,8 @@ class IncrementalKVStore:
             "latent": latent.tolist(),
             "meta": meta,
         }
+        rec = dict(payload)
+        rec["checksum"] = self._checksum(payload)
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         with open(self.path, "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -54,7 +79,7 @@ class IncrementalKVStore:
     # ============ 读取 ============
 
     def _read_raw(self) -> list:
-        """读全部行, 跳过损坏/不完整行 (crash-safe 核心)"""
+        """读全部行: 跳过损坏/不完整行 + checksum 不匹配行 (防静默损坏)"""
         if not os.path.exists(self.path):
             return []
         recs = []
@@ -67,6 +92,8 @@ class IncrementalKVStore:
                     rec = json.loads(line)
                     if rec.get("magic") != self.MAGIC:
                         continue
+                    if not self._verify(rec):
+                        continue  # checksum 不匹配: 内容被篡改/损坏, 跳过
                     recs.append(rec)
                 except Exception:
                     continue  # 崩溃残留的半行: 跳过

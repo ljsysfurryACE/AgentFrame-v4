@@ -2,7 +2,7 @@
 
 **脑 = DeepSeek · 手 = 工具执行 · 记忆 = 四层上下文保持**
 
-版本 4.5.0 · GPL-3.0 · Cloud LTE Studio
+版本 4.5.1 · GPL-3.0 · Cloud LTE Studio
 
 ---
 
@@ -37,6 +37,7 @@
 | **LFRU 滞回** | 历史热块信用折减驱逐分数, 防抖动 (colibrì #441/#497) | ✓ 有测试 |
 | **Couple 预取** | 跨轮共现预取: 检索到 A 后预取常与 A 共现的 B (colibrì couple) | ✓ 有测试 |
 | **KV 增量持久化** | 每轮 append 不重写全量, crash-safe 坏行跳过 (colibrì kv_persist) | ✓ 有测试 |
+| **checksum 防损坏** | 每行 content checksum, 篡改/静默损坏整行跳过 (memory-system 启发) | ✓ 有测试 |
 | **前缀复用** | 相同前缀 query 复用上次检索, 保持热块 (colibrì kv_prefix) | ✓ 有测试 |
 | **认知层接线** | directive.required_chunks 参与路由加权 (任务标签→命中提升) | ✓ 有测试 |
 | **脑+手** | function calling 工具循环, Agent 自验证代码 | ✓ 有测试 + 安全拦截 |
@@ -259,6 +260,15 @@ GPL-3.0 © Cloud LTE Studio
 ---
 
 ##  Changelog
+
+### v4.5.1 (2026-08-20) — checksum 防静默损坏
+
+**新增** (memory-system 协议启发)
+- **IncrementalKVStore 每行 content checksum**: MD5 前 8 位, append 时写入, load 时验证
+  - 篡改/静默损坏的行整行跳过 — 杜绝 "corruption is silent and permanent"
+  - 旧格式兼容: 无 checksum 的历史行仍接受, 新写入全部带校验
+
+**测试**: 核心测试 19 项 (+test_checksum_protection: 篡改检测 + 旧格式兼容)
 
 ### v4.5.0 (2026-08-19) — 认知层指令接线
 
