@@ -25,6 +25,7 @@ from ..memory.store import StateStore
 from ..memory.incremental import IncrementalKVStore
 from .quad import QuadLayerAgent
 from .couple import CouplePrefetcher
+from .tiers import TieredSummarizer
 
 # DeepSeek 工具定义 (给 Agent 的"手")
 RUN_PYTHON_TOOL = [{
@@ -173,9 +174,14 @@ class ContextEngine:
         k_prime, bias = self.agent.router.build_summary(kv.latent.reshape(1, -1))
         cid = kv.chunk_id
         self.agent.summaries[cid] = (k_prime, bias)
+        # L0/L1/L2 分层摘要 (OpenViking 启发): 写入时生成, 读取时按需展开
+        tiers = TieredSummarizer.make_tiers(text)
         self.agent.chunk_meta[cid] = {
             "tags": tags, "text": text, "source": source or "",
             "created_at": self.now,
+            "l0": tiers["l0"],
+            "l1": tiers["l1"],
+            "l2_len": tiers["l2_len"],
         }
         self._chunk_counter += 1
         # 增量追加持久化: 新 chunk 立即落盘 (crash-safe)
@@ -289,12 +295,10 @@ class ContextEngine:
         # 5. 生成回答
         answer = ""
         if chat:
-            ctx_texts = []
-            for cid in selection.chunk_ids:
-                meta = self.agent.chunk_meta.get(cid, {})
-                if meta.get("text"):
-                    ctx_texts.append(f"[知识块 {cid}] {meta['text']}")
-            ctx_block = "\n".join(ctx_texts) if ctx_texts else "(无检索到相关知识块)"
+            # 分层上下文 (OpenViking L0/L1 启发): 速览 + 概述, 比全文省 token
+            ctx_chunks = [(cid, self.agent.chunk_meta.get(cid, {}))
+                          for cid in selection.chunk_ids]
+            ctx_block = TieredSummarizer.build_tiered_context(ctx_chunks)
 
             system = (
                 "你是 AgentFrame 上下文保持系统。下面是从压缩缓存中检索到的知识块，"
@@ -411,12 +415,9 @@ class ContextEngine:
     def ask_with_hands(self, query: str, thinking: dict = None) -> AnswerResult:
         """带工具循环的查询 (Agent 可自行执行代码验证)"""
         result = self.ask(query, chat=False)
-        ctx_texts = []
-        for cid, _preview in result.retrieved:
-            meta = self.agent.chunk_meta.get(cid, {})
-            if meta.get("text"):
-                ctx_texts.append(f"[知识块 {cid}] {meta['text']}")
-        ctx_block = "\n".join(ctx_texts) if ctx_texts else "(无检索到相关知识块)"
+        ctx_chunks = [(cid, self.agent.chunk_meta.get(cid, {}))
+                      for cid, _preview in result.retrieved]
+        ctx_block = TieredSummarizer.build_tiered_context(ctx_chunks)
         system = (
             "你是 AgentFrame 上下文保持系统。下面是检索到的知识块。"
             "回答时优先使用这些知识，知识不足就如实说明。"

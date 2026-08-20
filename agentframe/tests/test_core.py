@@ -401,6 +401,45 @@ def test_checksum_protection():
     os.unlink(path2)
 
 
+def test_tiered_summarization():
+    """L0/L1/L2 分层摘要 (OpenViking 启发): 生成 + 分层上下文"""
+    from agentframe.core.tiers import TieredSummarizer
+
+    text = ("AgentFrame 四层上下文保持系统。认知层负责任务分解。"
+            "路由层用 landmark 检索 top-K。存储层做 INT4 量化压缩 29 倍。"
+            "物理层用 LFRU 滞回驱逐。")  
+    tiers = TieredSummarizer.make_tiers(text)
+    # L0: 一句话 (首句浓缩)
+    assert tiers["l0"], "L0 不应为空"
+    assert len(tiers["l0"]) <= 41, f"L0 应简短, 实际 {len(tiers['l0'])}"
+    assert "四层上下文保持" in tiers["l0"], "L0 应含首句核心"
+    # L1: 关键子句集合
+    assert len(tiers["l1"]) >= 2, "L1 应有多条"
+    assert tiers["l2_len"] == len(text), "L2 长度 = 全文长度"
+    print(f"✅ test_tiered_summarization (L0={tiers['l0']!r}, L1={len(tiers['l1'])}条)")
+
+    # 分层上下文: 应含 L0 速览 + L1 概述
+    chunks = [(0, {"text": text, "l0": tiers["l0"], "l1": tiers["l1"]})]
+    ctx = TieredSummarizer.build_tiered_context(chunks)
+    assert "知识速览" in ctx and "详情概述" in ctx
+    # L0-only 模式 (省 token)
+    ctx_l0 = TieredSummarizer.build_tiered_context(chunks, expand_l1=False)
+    assert "详情概述" not in ctx_l0
+    print("✅ test_tiered_summarization (L0速览 + L1概述 + 按需展开)")
+
+
+def test_tiers_in_engine():
+    """引擎级: ingest 自动生成 l0/l1, ask 用分层上下文"""
+    eng = make_engine()
+    eng.ingest("Aura 遗忘曲线公式 S(t)=I·2^(-t/τ)。高频访问块半衰期延长。")
+    meta = eng.agent.chunk_meta[0]
+    assert "l0" in meta and meta["l0"], "ingest 应生成 l0"
+    assert "l1" in meta and len(meta["l1"]) >= 1, "ingest 应生成 l1"
+    r = eng.ask("遗忘曲线", chat=False)
+    assert r.retrieved, "应检索到块"
+    print("✅ test_tiers_in_engine (ingest 自动分层 + ask 正常)")
+
+
 if __name__ == "__main__":
     test_ingest_and_retrieve()
     test_similar_text_retrieval()
@@ -419,4 +458,6 @@ if __name__ == "__main__":
     test_incremental_engine()
     test_directive_boost()
     test_checksum_protection()
+    test_tiered_summarization()
+    test_tiers_in_engine()
     print("\n🎉 全部核心测试通过!")

@@ -2,7 +2,7 @@
 
 **脑 = DeepSeek · 手 = 工具执行 · 记忆 = 四层上下文保持**
 
-版本 4.5.1 · GPL-3.0 · Cloud LTE Studio
+版本 4.6.0 · GPL-3.0 · Cloud LTE Studio
 
 ---
 
@@ -40,6 +40,7 @@
 | **checksum 防损坏** | 每行 content checksum, 篡改/静默损坏整行跳过 (memory-system 启发) | ✓ 有测试 |
 | **前缀复用** | 相同前缀 query 复用上次检索, 保持热块 (colibrì kv_prefix) | ✓ 有测试 |
 | **认知层接线** | directive.required_chunks 参与路由加权 (任务标签→命中提升) | ✓ 有测试 |
+| **L0/L1/L2 分层摘要** | 写入时生成三层, 读取按需展开 (OpenViking 启发) | ✓ 有测试 |
 | **脑+手** | function calling 工具循环, Agent 自验证代码 | ✓ 有测试 + 安全拦截 |
 | **多会话** | 每会话独立引擎, 状态可持久化 | ✓ |
 
@@ -253,13 +254,21 @@ MemoryDirector 的决策：
 
 **结论**: 物理压缩是「省空间的放大器」，语义压缩是「减内容的过滤器」——先滤后压，缺一不可。
 
-##  许可证
-
-GPL-3.0 © Cloud LTE Studio
-
 ---
 
 ##  Changelog
+
+### v4.6.0 (2026-08-20) — L0/L1/L2 分层摘要 (OpenViking 启发)
+
+**新增**
+- **TieredSummarizer** (core/tiers.py): 每个知识块写入时生成三层摘要
+  - L0 (~40 字符): 一句话速览, 快速相关性检查
+  - L1 (≤5 条关键子句): 概述, 规划用
+  - L2: 完整原文, 按需读取
+- ask()/ask_with_hands() 上下文改为**分层构建**: 【知识速览 L0】→【详情概述 L1】, 结构化且省 token
+- 零额外 LLM 成本: 确定性启发式 (句切分 + 关键词提取), 与双轨压缩正交 (语义×物理×分层)
+
+**测试**: 核心测试 21 项 (+test_tiered_summarization / test_tiers_in_engine)
 
 ### v4.5.1 (2026-08-20) — checksum 防静默损坏
 
@@ -362,6 +371,62 @@ GPL-3.0 © Cloud LTE Studio
 ### v3.0.0-preview — 整合 DeepSeek Harness + dsh 插件
 
 - 四层上下文保持 (认知×路由×存储×物理) + MemoryDirector 自主记忆 + 脑手一体
+
+---
+
+##  来源与致谢 (Credits)
+
+AgentFrame 的部分设计与实现借鉴了以下开源项目，特此致谢：
+
+### 🐦 colibrì (JustVugg/colibri, Apache-2.0)
+
+[colibrì](https://github.com/JustVugg/colibri) 是用纯 C 在消费级硬件上推理 MoE 大模型的推理引擎（GLM-5.2 744B / 25GB 内存）。AgentFrame 从中移植/借鉴了以下技术：
+
+| AgentFrame 模块 | 来源 | 说明 |
+|----------------|------|------|
+| `ReversibleQuantizer.quantize_int4/dequant_int4` | `c/quant.h` `pack_int4` | 真 INT4 打包: 对称量化 (absmax/7) + per-channel scale + nibble 打包 `(v+8)\|((v1+8)<<4)` |
+| `KVPager.effective_eviction_score` (LFRU 滞回) | `#441/#497` LFRU eviction guard | 历史峰值热度 (max_heat) 信用折减驱逐分数, 防高频块反复横跳 |
+| `CouplePrefetcher` | `couple_prefetch` + `.coli_pairs` | 跨轮共现预取: 检索到 A 后预测常与 A 共现的 B |
+| `IncrementalKVStore` | `c/kv_persist.h` | KV 增量追加持久化, 行级 crash-safe, 重启恢复不用重算 |
+| 查询前缀复用 `_prefix_reuse` | `c/kv_prefix.h` | 相同前缀 prompt 跳过重复处理, 保持热状态 |
+
+### 📚 memory-system (HeiCha1231414/memory-system, MIT)
+
+[memory-system](https://github.com/HeiCha1231414/memory-system) 是长期运行 AI Agent 的记忆持久化协议。AgentFrame 借鉴了：
+
+| AgentFrame 模块 | 来源 | 说明 |
+|----------------|------|------|
+| `IncrementalKVStore` checksum 校验 | 备份 + 校验和验证规则 | 每行 content checksum (MD5), 篡改/静默损坏整行跳过, 杜绝 silent corruption |
+
+### 🧭 OpenViking (volcengine/OpenViking, AGPL-3.0)
+
+[OpenViking](https://github.com/volcengine/OpenViking) 是字节开源的 Agent 上下文数据库 (viking:// 虚拟文件系统 + 分层加载)。AgentFrame 借鉴了：
+
+| AgentFrame 模块 | 来源 | 说明 |
+|----------------|------|------|
+| `TieredSummarizer` (L0/L1/L2) | 分层加载 L0 abstract / L1 overview / L2 details | 写入时生成三层摘要, 读取时按任务深度加载, 省 token |
+
+> 注: AgentFrame 采用确定性启发式实现 (零额外 LLM 调用), 非代码复制。
+
+### 🧠 DeepSeek-V2 MLA (deepseek-ai)
+
+- 吸收式 MLA 缓存概念 (只存 576 维潜在向量 512 kv_lora + 64 k_pe, 不展开 KV) 源自 [DeepSeek-V2](https://arxiv.org/abs/2405.04434) 论文架构。
+- 28.4x 压缩比实测基于 DeepSeek-V2-Lite-Chat (15.7B) 在 L40S 上的真实推理验证。
+
+### 🌱 Project-Aura
+
+- `ForgettingCurve` 遗忘曲线公式 S(t) = I·2^(-t/τ) 源自 Project-Aura 项目。
+
+---
+
+##  许可证
+
+AgentFrame 本体: GPL-3.0 © Cloud LTE Studio
+
+移植代码许可说明:
+- colibrì (Apache-2.0) → 移植部分保持 Apache-2.0 兼容 (GPL-3.0 与 Apache-2.0 兼容)
+- memory-system (MIT) → 借鉴思想, 非代码复制
+- DeepSeek-V2 / Project-Aura → 仅借鉴论文/思想
 
 ---
 
